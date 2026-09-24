@@ -3,7 +3,7 @@
 PATH=/data/adb/ap/bin:/data/adb/ksu/bin:/data/adb/magisk:/data/data/com.termux/files/usr/bin:$PATH
 MODDIR=/data/adb/modules/playintegrityfix
 
-REPOSITORY="KOWX712/PlayIntegrityFix"
+REPOSITORY="DaniTheSillyFem/PlayIntegrityFix"
 BRANCH="inject_s"
 AUTOPIF_PATH="$BRANCH/module/autopif.sh"
 GITHUB_CDN="https://fastly.jsdelivr.net/gh/$REPOSITORY"

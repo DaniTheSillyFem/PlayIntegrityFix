@@ -18,11 +18,11 @@ echo "[+] PlayIntegrityFix $version"
 echo "[+] $(basename "$0")"
 printf "\n\n"
 
-set_random_beta() {
+set_random_pixel() {
 	if [ "$(echo "$MODEL_LIST" | wc -l)" -ne "$(echo "$PRODUCT_LIST" | wc -l)" ]; then
 		echo "Warning: MODEL_LIST and PRODUCT_LIST have different lengths, using Pixel 6 fallback"
 		MODEL="Pixel 6"
-		PRODUCT="oriole_beta"
+		PRODUCT="oriole"
 	else
 		count=$(echo "$MODEL_LIST" | wc -l)
 		rand_index=$(( $$ % count ))
@@ -56,7 +56,7 @@ get_model_product_list() {
 
 # Get latest Pixel Canary information
 download https://developer.android.com/about/versions PIXEL_VERSIONS_HTML
-LATEST_BETA=$(grep -B4 -A2 'data-icon=\"preview' PIXEL_VERSIONS_HTML | grep -o 'href="/about/versions/.*[0-9]"' | cut -d\" -f2)
+LATEST_BETA=$(grep -B4 -A2 'data-icon="preview' PIXEL_VERSIONS_HTML | grep -o 'href="/about/versions/.*[0-9]"' | cut -d\" -f2)
 [ "$LATEST_BETA" ] || LATEST_BETA=$(grep -oE 'href="/about/versions/[0-9]{2}"' PIXEL_VERSIONS_HTML | cut -d\" -f2 | sort -ru | head -n1)
 download "https://developer.android.com$LATEST_BETA" PIXEL_LATEST_HTML
 
@@ -69,7 +69,7 @@ SRC=FI; [ "$(grep 'tr id=' PIXEL_FI_HTML | sed 's;.*<tr id="\(.*\)">.*;\1;' | wc
 
 # Extract device information
 MODEL_LIST="$(grep -A1 'tr id=' PIXEL_${SRC}_HTML | grep 'td' | sed 's;.*<td>\(.*\)</td>.*;\1;')";
-PRODUCT_LIST="$(grep 'tr id=' PIXEL_${SRC}_HTML | sed 's;.*<tr id="\(.*\)">.*;\1_beta;')";
+PRODUCT_LIST="$(grep 'tr id=' PIXEL_${SRC}_HTML | sed 's;.*<tr id="\(.*\)">.*;\1;')";
 
 # List available devices
 if [ "$1" = "--list" ] || [ "$1" = "-l" ]; then
@@ -77,14 +77,15 @@ if [ "$1" = "--list" ] || [ "$1" = "-l" ]; then
 fi
 
 # Select and configure device
-echo "- Selecting Pixel Canary device ..."
+echo "- Selecting Pixel device ..."
+PRODUCT="${PRODUCT%_beta}"
 if [ -z "$PRODUCT" ] || ! echo "$PRODUCT_LIST" | grep -q "$PRODUCT"; then
-	set_random_beta
+	set_random_pixel
 fi
 echo "$MODEL ($PRODUCT)"
 
 # Get device fingerprint and security patch from Flash Tool and bulletins
-DEVICE="$(echo "$PRODUCT" | sed 's/_beta//')"
+DEVICE="$PRODUCT"
 download https://flash.android.com PIXEL_FLASH_HTML
 FLASH_KEY=$(grep -o '<body data-client-config=.*' PIXEL_FLASH_HTML | cut -d\; -f2 | cut -d\& -f1)
 if command -v curl > /dev/null 2>&1; then
@@ -92,24 +93,67 @@ if command -v curl > /dev/null 2>&1; then
 else
 	busybox wget -T 10 --header "Referer: https://flash.android.com" -qO - "https://content-flashstation-pa.googleapis.com/v1/builds?product=$PRODUCT&key=$FLASH_KEY" > PIXEL_STATION_JSON || download_fail "https://flash.android.com"
 fi
-busybox tac PIXEL_STATION_JSON | busybox grep -m1 -A13 '"canary": true' > PIXEL_CANARY_JSON
-ID="$(grep 'releaseCandidateName' PIXEL_CANARY_JSON | cut -d\" -f4)"
-INCREMENTAL="$(grep 'buildId' PIXEL_CANARY_JSON | cut -d\" -f4)"
-FINGERPRINT="google/$PRODUCT/$DEVICE:CANARY/$ID/$INCREMENTAL:user/release-keys"
+ID=""
+INCREMENTAL=""
+
+BUILD_ID=""
+BUILD_RC=""
+BUILD_NOTES=""
+BUILD_LATEST=""
+
+while IFS= read -r line; do
+	case "$line" in
+		*'"buildId": "'*)
+			BUILD_ID=$(echo "$line" | cut -d'"' -f4)
+			;;
+		*'"releaseCandidateName": "'*)
+			BUILD_RC=$(echo "$line" | cut -d'"' -f4)
+			;;
+		*'"version": "'*)
+			BUILD_VERSION=$(echo "$line" | cut -d'"' -f4)
+			;;
+		*'"notes": "'*)
+			BUILD_NOTES=$(echo "$line" | cut -d'"' -f4)
+			;;
+		*'"latest": true'*)
+			if [ "$BUILD_NOTES" = "" ] && [ -n "$BUILD_ID" ] && [ -n "$BUILD_RC" ]; then
+				INCREMENTAL="$BUILD_ID"
+				ID="$BUILD_RC"
+				ANDROID_VERSION="${BUILD_VERSION%%.*}"
+			fi
+
+			BUILD_ID=""
+			BUILD_RC=""
+			BUILD_VERSION=""
+			BUILD_NOTES=""
+			;;
+	esac
+done < PIXEL_STATION_JSON
+FINGERPRINT="google/$PRODUCT/$DEVICE:$ANDROID_VERSION/$ID/$INCREMENTAL:user/release-keys"
 download https://source.android.com/docs/security/bulletin/pixel PIXEL_SECBULL_HTML
-CANARY_ID="$(grep '"id"' PIXEL_CANARY_JSON | sed -e 's;.*canary-\(.*\)".*;\1;' -e 's;^\(.\{4\}\);\1-;')"
-SECURITY_PATCH="$(grep "<td>$CANARY_ID" PIXEL_SECBULL_HTML | sed 's;.*<td>\(.*\)</td>;\1;')"
+BUILD_DATE="$(echo "$ID" | sed -n 's/^[A-Z0-9]*\.\([0-9]\{6\}\)\..*/\1/p')"
+
+if [ -z "$BUILD_DATE" ]; then
+	echo "! Failed to determine build date"
+	exit 1
+fi
+
+BULLETIN_YEAR="20$(echo "$BUILD_DATE" | cut -c1-2)"
+BULLETIN_MONTH="$(echo "$BUILD_DATE" | cut -c3-4)"
+BULLETIN_ID="${BULLETIN_YEAR}-${BULLETIN_MONTH}"
+
+SECURITY_PATCH="$(grep -A1 "<td>$BULLETIN_ID" PIXEL_SECBULL_HTML | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -n1)"
 
 # Validate required field to prevent empty pif.prop
 if [ -z "$ID" ] || [ -z "$INCREMENTAL" ]; then
-	echo "! Failed to get pif.prop"
+	echo "! Failed to get latest stable build"
 	exit 1
 fi
 
 if [ -z "$SECURITY_PATCH" ]; then
 	echo "! Failed to determine exact security patch level"
 	echo "- Assuming probable security patch level from Canary build info"
-	SECURITY_PATCH="${CANARY_ID}-05"
+	SECURITY_PATCH="${BULLETIN_ID}-05"
 fi
 
 # Preserve previous setting
