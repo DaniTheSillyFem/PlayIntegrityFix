@@ -6,6 +6,10 @@ This module tries to fix Play Integrity verdicts to get a valid attestation.
 
 This module is not made to hide root, nor to avoid detections in other apps. It only serves to pass Device verdict in the Play Integrity tests and certify your device.
 
+## WARNING
+
+I only forked PIF-Inject for the sole reason of making the Fingerprints nice (aka fetch non-canary fingerprints, aka stable latest fingerprints), this module still just does what PIF-Inject does.
+
 ## Tutorial
 
 You will need root and Zygisk. Enable Magisk's built-in Zygisk or use [ZygiskNext](https://github.com/Dr-TSNG/ZygiskNext) / [NeoZygisk](https://github.com/JingMatrix/NeoZygisk) / [ReZygisk](https://github.com/PerformanC/ReZygisk).
